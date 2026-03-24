@@ -21098,7 +21098,7 @@ const Dashboard = () => {
       const diffTime = Math.abs(new Date() - new Date(post.timestamp));
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       if (dateFilter === 'Today' && diffDays > 1) return false;
-      if (dateFilter === 'Last7Days' && diffDays > 7) return false;
+      if (dateFilter === 'Last2Days' && diffDays > 2) return false;
     }
     return true;
   });
@@ -21140,7 +21140,7 @@ const Dashboard = () => {
           >
             <option value="All">All Dates</option>
             <option value="Today">Today</option>
-            <option value="Last7Days">Last 7 Days</option>
+            <option value="Last2Days">Last 2 Days</option>
           </select>
         </div>
       </div>
@@ -21175,11 +21175,10 @@ const Dashboard = () => {
                       <td className="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">{post.caption}</td>
                       <td className="px-6 py-4 text-sm">{post.mediaType}</td>
                       <td className="px-6 py-4">
-                        <span className={`px-2 py-1 text-xs font-bold rounded-full ${
-                          post.sentiment === 'Positive' ? 'bg-green-100 text-green-800' :
-                          post.sentiment === 'Negative' ? 'bg-red-100 text-red-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
+                        <span className={`px-2 py-1 text-xs font-bold rounded-full ${post.sentiment === 'Positive' ? 'bg-green-100 text-green-800' :
+                            post.sentiment === 'Negative' ? 'bg-red-100 text-red-800' :
+                              'bg-gray-100 text-gray-800'
+                          }`}>
                           {post.sentiment}
                         </span>
                       </td>
