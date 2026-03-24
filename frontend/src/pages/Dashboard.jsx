@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { io } from 'socket.io-client';
 
 const Dashboard = () => {
   const [posts, setPosts] = useState([]);
@@ -24,8 +25,25 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    fetchPosts();
-  }, []);
+    fetchPosts(searchQuery.split(' ').join(','));
+
+    // Listen for realtime backend updates
+    const socket = io("http://localhost:5000");
+    
+    socket.on("newData", () => {
+      console.log("New Instagram data received in background, auto-refreshing dashboard!");
+      // Automatically refresh UI with the ongoing search query
+      fetchPosts(searchQuery.split(' ').join(',')); 
+    });
+
+    socket.on("alert", (data) => {
+      alert(`[SYSTEM ALERT] High risk detect. ${data.negatives} negative posts on #${data.keyword}`);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [searchQuery]);
 
   const handleSearch = (e) => {
     e.preventDefault();

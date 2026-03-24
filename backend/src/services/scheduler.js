@@ -16,16 +16,27 @@ cron.schedule("*/5 * * * *", async () => {
             // Service handles 200 API rate limit globally & performs Sentiment Analysis dynamically!
             const newPosts = await fetchRecentMedia(tag.keyword);
             
+            if (newPosts.length > 0) {
+                // Emit event to all connected clients that new data is available
+                const serverId = require("../server");
+                if (serverId && serverId.io) {
+                    serverId.io.emit("newData"); // Notify frontend to trigger fetch
+                }
+            }
+            
             // 6. ALERT SYSTEM Implementation Check 
             let negativeCount = 0;
             for (let post of newPosts) {
                 if(post.sentiment === "Negative") negativeCount++;
             }
             
-            // Simple threshold: alert if new fetch returns > 5 negative posts
+            // Simple threshold: alert if new fetch returns >= 5 negative posts
             if (negativeCount >= 5) {
                 console.warn(`[ALERT] Spike in negative posts detected for #${tag.keyword}: ${negativeCount} negatives.`);
-                // Here emitting WebSocket event for Dashboard Real-time alert.
+                const serverId = require("../server");
+                if (serverId && serverId.io) {
+                    serverId.io.emit("alert", { keyword: tag.keyword, negatives: negativeCount });
+                }
             }
         }
     } catch (error) {
