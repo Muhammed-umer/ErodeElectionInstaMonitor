@@ -1,87 +1,69 @@
-const axios = require("axios");
-const Bottleneck = require("bottleneck");
+const { exec } = require("child_process");
+const path = require("path");
 const Hashtag = require("../models/Hashtag");
 const Post = require("../models/Post");
 const { analyzeSentiment } = require("./sentimentService");
 
-// Approx 200 API calls per hour per account -> roughly 3.3 per minute.
-// We set limits to 3 requests per minute max to be safe.
-const limiter = new Bottleneck({
-  minTime: 20000, // 20 seconds between requests
-  maxConcurrent: 1,
-});
-
-const ACCESS_TOKEN = process.env.IG_ACCESS_TOKEN;
-const IG_USER_ID = process.env.IG_USER_ID; 
-
-// Retrieve or Search Hashtag ID
-async function getHashtagId(keyword) {
-  keyword = keyword.replace("#", "").toLowerCase();
-  
-  // 1. Check local DB
-  let hashtagDoc = await Hashtag.findOne({ keyword });
-  if (hashtagDoc) return hashtagDoc.igHashtagId;
-
-  // 2. Not in DB - Enforce the 30 hashtags per 7 days limit
-  const canAdd = await Hashtag.canAddHashtag();
-  if (!canAdd) {
-    throw new Error("Hashtag limit reached (30 unique per 7 days). Cannot search new hashtag: " + keyword);
-  }
-
-  // 3. Rate-limited API Call to find IG Hashtag ID
-  const response = await limiter.schedule(() =>
-    axios.get(`https://graph.facebook.com/v18.0/ig_hashtag_search`, {
-      params: { user_id: IG_USER_ID, q: keyword, access_token: ACCESS_TOKEN }
-    })
-  );
-
-  const igHashtagId = response.data.data[0].id;
-
-  // 4. Save to DB
-  hashtagDoc = new Hashtag({ keyword, igHashtagId });
-  await hashtagDoc.save();
-
-  return igHashtagId;
-}
-
-// Fetch and Analyze Recent Media for a given Hashtag
 async function fetchRecentMedia(keyword) {
   try {
-    const igHashtagId = await getHashtagId(keyword);
+    const cleanKeyword = keyword.replace("#", "").toLowerCase();
+    
+    // 1. Enforce Hashtag limits in MongoDB
+    let hashtagDoc = await Hashtag.findOne({ keyword: cleanKeyword });
+    if (!hashtagDoc) {
+      const canAdd = await Hashtag.canAddHashtag();
+      if (!canAdd) throw new Error("Hashtag limit reached (30 unique per 7 days).");
+      hashtagDoc = new Hashtag({ keyword: cleanKeyword, igHashtagId: cleanKeyword });
+      await hashtagDoc.save();
+    }
 
-    // Rate-limited API Call to fetch recent media
-    const response = await limiter.schedule(() =>
-      axios.get(`https://graph.facebook.com/v18.0/${igHashtagId}/recent_media`, {
-        params: {
-          user_id: IG_USER_ID,
-          fields: "id,caption,media_type,timestamp,username",
-          access_token: ACCESS_TOKEN,
-          limit: 25
+    // 2. Execute the Python Instaloader script
+    const posts = await new Promise((resolve, reject) => {
+      const scriptPath = path.join(__dirname, "../../scraper.py");
+      
+      // Pass the Node environment variables (which include .env vars loaded globally) to Python
+      exec(`python "${scriptPath}" ${cleanKeyword}`, { env: process.env }, (error, stdout, stderr) => {
+        if (error) {
+          console.error("Python scraper error:", stderr || error.message);
+          resolve([]);
+        } else {
+          try {
+            // Strip any prefix logs Instaloader might throw to stdout to find JSON array
+            const jsonStart = stdout.indexOf('[');
+            if(jsonStart === -1) {
+              const errStart = stdout.indexOf('{');
+              if(errStart !== -1) {
+                const errData = JSON.parse(stdout.substring(errStart));
+                console.error("Instaloader returned error:", errData.error);
+              }
+              resolve([]);
+              return;
+            }
+            const jsonStr = stdout.substring(jsonStart);
+            const data = JSON.parse(jsonStr);
+            resolve(data);
+          } catch (e) {
+            console.error("Failed to parse scraper output:", e);
+            resolve([]);
+          }
         }
-      })
-    );
+      });
+    });
 
-    const posts = response.data.data;
     if (!posts || posts.length === 0) return [];
 
     const newPosts = [];
-
-    // Process posts and Analyze Sentiment
+    // 3. Process, Analyze Sentiment, and Save to MongoDB
     for (const p of posts) {
       if (!p.caption) continue;
 
-      // Extract typical hashtags from caption to assist search filters
       const postHashtags = p.caption.match(/#[a-z0-9_]+/gi) || [];
-
-      // Pass caption to Sentiment Analysis (uses appropriate HuggingFace model dynamically)
       const sentiment = await analyzeSentiment(p.caption);
 
-      // Check if already in DB based on unique IG ID or unique caption matching to avoid duplication
-      // In a real app we would map IG Post 'id' directly inside our Post Schema to avoid dupes:
       const existing = await Post.findOne({ caption: p.caption, timestamp: p.timestamp });
       if (!existing) {
         const postDoc = await Post.create({
-          username: p.username || "unknown", // Graph API might restrict username based on privacy
+          username: p.username || "unknown",
           caption: p.caption,
           hashtags: postHashtags,
           timestamp: p.timestamp,
@@ -89,9 +71,6 @@ async function fetchRecentMedia(keyword) {
           mediaType: p.media_type === "VIDEO" ? "Reel" : "Post"
         });
         newPosts.push(postDoc);
-        
-        // ALERTS SYSTEM IMPL:
-        // We can emit sockets/events here if 'sentiment === Negative' matches threshold criteria
       }
     }
 
@@ -103,7 +82,8 @@ async function fetchRecentMedia(keyword) {
   }
 }
 
+// Ensure getHashtagId is strictly mocked for backwards compatibility if needed
 module.exports = {
   fetchRecentMedia,
-  getHashtagId
+  getHashtagId: async (kw) => kw
 };

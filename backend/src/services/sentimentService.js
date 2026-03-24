@@ -4,9 +4,9 @@ const SystemConfig = require("../models/SystemConfig");
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 
 const MODEL_URLS = {
-  distilbert: "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english",
-  roberta: "https://api-inference.huggingface.co/models/cardiffnlp/twitter-roberta-base-sentiment",
-  bertweet: "https://api-inference.huggingface.co/models/finiteautomata/bertweet-base-sentiment-analysis"
+  distilbert: "https://router.huggingface.co/hf-inference/models/distilbert-base-uncased-finetuned-sst-2-english",
+  roberta: "https://router.huggingface.co/hf-inference/models/cardiffnlp/twitter-roberta-base-sentiment",
+  bertweet: "https://router.huggingface.co/hf-inference/models/finiteautomata/bertweet-base-sentiment-analysis"
 };
 
 async function getSelectedModelUrl() {
@@ -19,6 +19,13 @@ async function getSelectedModelUrl() {
 
 // HuggingFace Sentiment Logic
 async function analyzeSentiment(text) {
+  if (!HUGGINGFACE_API_KEY) {
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes('good') || lowerText.includes('great') || lowerText.includes('awesome') || lowerText.includes('support')) return "Positive";
+    if (lowerText.includes('bad') || lowerText.includes('terrible') || lowerText.includes('hate') || lowerText.includes('fake')) return "Negative";
+    return "Neutral";
+  }
+
   try {
     const { url, type } = await getSelectedModelUrl();
     const response = await axios.post(
